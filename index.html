@@ -1,30 +1,699 @@
-// Simple offline-first service worker
-const CACHE_NAME = "alzulfi-cache-v1";
-const ASSETS = ["./", "./index.html", "./manifest.webmanifest"];
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>الزلفي — نموذج التقاط ميداني (الإصدار 2)</title>
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
-});
+  <link rel="manifest" href="manifest.webmanifest" />
 
-self.addEventListener("activate", (e) => {
-  e.waitUntil(self.clients.claim());
-});
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      });
+    }
+  </script>
 
-self.addEventListener("fetch", (e) => {
-  const req = e.request;
-  e.respondWith(
-    caches.match(req).then(
-      (cached) =>
-        cached ||
-        fetch(req)
-          .then((res) => {
-            const copy = res.clone();
-            caches.open(CACHE_NAME).then((c) => c.put(req, copy));
-            return res;
-          })
-          .catch(() => cached)
-    )
-  );
-});
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    html, body { height: 100%; }
+    /* Simple utility since @apply doesn't work with CDN */
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      line-height: 1rem;
+      font-weight: 500;
+      background: #f3f4f6; /* gray-100 */
+    }
+  </style>
+</head>
+<body class="min-h-full bg-gray-50 text-gray-900">
+  <div class="mx-auto max-w-7xl p-4 md:p-8">
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-semibold">الزلفي — نموذج التقاط ميداني</h1>
+        <p class="text-sm text-gray-600">إصدار بلا إنترنت + مزامنة اختيارية مع Supabase</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button id="exportJsonBtn" class="px-3 py-2 rounded-lg bg-black text-white">تصدير JSON</button>
+        <button id="exportCsvBtn" class="px-3 py-2 rounded-lg bg-white border">تصدير CSV</button>
+        <button id="waBtn" class="px-3 py-2 rounded-lg bg-green-600 text-white">ملخص واتساب</button>
+        <label class="px-3 py-2 rounded-lg bg-white border cursor-pointer">
+          استيراد JSON
+          <input id="importInput" type="file" accept="application/json" class="hidden" />
+        </label>
+        <button id="clearBtn" class="px-3 py-2 rounded-lg bg-white border">حذف الكل</button>
+        <button id="settingsBtn" class="px-3 py-2 rounded-lg bg-indigo-600 text-white">إعدادات Supabase</button>
+      </div>
+    </header>
+
+    <!-- Tabs -->
+    <div class="mb-4 flex gap-2">
+      <button data-tab="form" class="tab px-3 py-2 rounded-lg bg-blue-600 text-white">إضافة إدخال</button>
+      <button data-tab="list" class="tab px-3 py-2 rounded-lg bg-white border">السجلات</button>
+      <button data-tab="decisions" class="tab px-3 py-2 rounded-lg bg-white border">لوحة القرارات</button>
+      <button data-tab="issues" class="tab px-3 py-2 rounded-lg bg-white border">سجل القضايا/المخاطر</button>
+    </div>
+
+    <section id="tab-form" class="grid md:grid-cols-3 gap-6 mb-8">
+      <!-- Form -->
+      <div class="md:col-span-2 bg-white rounded-2xl shadow p-4 md:p-6">
+        <h2 class="text-lg font-semibold mb-4">إدخال جديد</h2>
+        <form id="entryForm" class="grid gap-3">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label class="block text-sm mb-1">القسم</label>
+              <select id="section" class="w-full border rounded-lg px-3 py-2" required>
+                <option>المرافق</option>
+                <option>العمليات</option>
+                <option>التجاري/الرعايات</option>
+                <option>المالية</option>
+                <option>الموارد البشرية</option>
+                <option>الإعلام/التواصل</option>
+                <option>القانونية</option>
+                <option>تقنية المعلومات</option>
+                <option>الطبي/الأكاديمية</option>
+                <option>الأمن/السلامة</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm mb-1">الموقع/المنطقة</label>
+              <input id="area" type="text" class="w-full border rounded-lg px-3 py-2" placeholder="المدرج الشمالي، مكتب التذاكر…" />
+            </div>
+            <div>
+              <label class="block text-sm mb-1">العنصر</label>
+              <input id="item" type="text" class="w-full border rounded-lg px-3 py-2" placeholder="درابزين، ماسح، عقد…" />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">الملاحظة/المشكلة</label>
+            <textarea id="issue" rows="3" class="w-full border rounded-lg px-3 py-2" placeholder="وصف العيب أو الفجوة أو الملاحظة" required></textarea>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div>
+              <label class="block text-sm mb-1">الشدة</label>
+              <select id="severity" class="w-full border rounded-lg px-3 py-2">
+                <option>منخفض</option>
+                <option>متوسط</option>
+                <option>عالٍ</option>
+                <option>حرج</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm mb-1">نوع الأثر</label>
+              <select id="impactType" class="w-full border rounded-lg px-3 py-2">
+                <option value="ساعات">ساعات</option>
+                <option value="ريال">ريال</option>
+                <option value="مخاطر">مخاطر</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm mb-1">قيمة الأثر</label>
+              <input id="impactValue" type="number" step="0.01" class="w-full border rounded-lg px-3 py-2" placeholder="مثال: 12 أو 5000" />
+            </div>
+            <div>
+              <label class="block text-sm mb-1">الموعد النهائي</label>
+              <input id="deadline" type="date" class="w-full border rounded-lg px-3 py-2" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label class="block text-sm mb-1">المالك/المسؤول</label>
+              <input id="owner" type="text" class="w-full border rounded-lg px-3 py-2" placeholder="اسم/قسم" />
+            </div>
+            <div>
+              <label class="block text-sm mb-1">هل يتطلب قرار؟</label>
+              <select id="needsDecision" class="w-full border rounded-lg px-3 py-2">
+                <option value="No">لا</option>
+                <option value="Yes">نعم</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm mb-1">الحالة</label>
+              <select id="status" class="w-full border rounded-lg px-3 py-2">
+                <option>مفتوح</option>
+                <option>جارٍ</option>
+                <option>محجوب</option>
+                <option>مغلق</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">صور (اختياري)</label>
+            <input id="photos" type="file" accept="image/*" capture="environment" multiple class="w-full" />
+            <p class="text-xs text-gray-500 mt-1">يتم ضغط الصور قبل الحفظ. حد أقصى 5 صور لكل إدخال.</p>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button class="px-4 py-2 rounded-lg bg-blue-600 text-white" type="submit">إضافة</button>
+            <button id="resetFormBtn" class="px-4 py-2 rounded-lg bg-gray-200" type="button">إعادة تعيين</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Filters -->
+      <aside class="bg-white rounded-2xl shadow p-4 md:p-6">
+        <h3 class="text-lg font-semibold mb-3">مرشحات</h3>
+        <div class="grid gap-3">
+          <div>
+            <label class="block text-sm mb-1">القسم</label>
+            <select id="filterSection" class="w-full border rounded-lg px-3 py-2">
+              <option value="">الكل</option>
+              <option>المرافق</option>
+              <option>العمليات</option>
+              <option>التجاري/الرعايات</option>
+              <option>المالية</option>
+              <option>الموارد البشرية</option>
+              <option>الإعلام/التواصل</option>
+              <option>القانونية</option>
+              <option>تقنية المعلومات</option>
+              <option>الطبي/الأكاديمية</option>
+              <option>الأمن/السلامة</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm mb-1">بحث نصي</label>
+            <input id="filterSearch" type="text" placeholder="كلمة مفتاحية" class="w-full border rounded-lg px-3 py-2" />
+          </div>
+          <div class="flex gap-2">
+            <button id="applyFilters" class="px-3 py-2 rounded-lg bg-black text-white">تطبيق</button>
+            <button id="clearFilters" class="px-3 py-2 rounded-lg bg-white border">مسح</button>
+          </div>
+        </div>
+
+        <hr class="my-6" />
+
+        <h3 class="text-lg font-semibold mb-3">قوالب سريعة</h3>
+        <div class="grid gap-2">
+          <button data-tpl="المرافق" class="tplBtn px-3 py-2 rounded-lg bg-gray-100 text-left">عيب مرافق</button>
+          <button data-tpl="العمليات" class="tplBtn px-3 py-2 rounded-lg bg-gray-100 text-left">تشغيل يوم المباراة</button>
+          <button data-tpl="التجاري/الرعايات" class="tplBtn px-3 py-2 rounded-lg bg-gray-100 text-left">التزامات رعاية</button>
+          <button data-tpl="الأمن/السلامة" class="tplBtn px-3 py-2 rounded-lg bg-gray-100 text-left">الأمن/السلامة</button>
+        </div>
+      </aside>
+    </section>
+
+    <!-- List / Decisions / Issues -->
+    <section id="tab-list" class="hidden bg-white rounded-2xl shadow p-4 md:p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">السجلات</h2>
+        <div class="text-sm text-gray-600"><span id="count"></span> إجمالي</div>
+      </div>
+      <div id="entries" class="grid gap-3"></div>
+    </section>
+
+    <section id="tab-decisions" class="hidden bg-white rounded-2xl shadow p-4 md:p-6">
+      <h2 class="text-lg font-semibold mb-3">لوحة القرارات</h2>
+      <div id="decisionsBoard" class="grid gap-3"></div>
+    </section>
+
+    <section id="tab-issues" class="hidden bg-white rounded-2xl shadow p-4 md:p-6">
+      <h2 class="text-lg font-semibold mb-3">سجل القضايا/المخاطر</h2>
+      <div id="issuesLog" class="grid gap-3"></div>
+    </section>
+
+    <footer class="text-xs text-gray-500 mt-8">
+      نسخة V2 — محلي في المتصفح + مزامنة اختيارية. صدِّر JSON/CSV قبل مسح البيانات.
+    </footer>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center p-4">
+    <div class="bg-white w-full max-w-2xl rounded-2xl p-6 shadow-xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">إعدادات Supabase</h3>
+        <button id="closeSettings" class="text-gray-500">✕</button>
+      </div>
+      <div class="grid gap-3">
+        <label class="text-sm">Supabase URL
+          <input id="sbUrl" type="text" class="w-full border rounded-lg px-3 py-2" placeholder="https://xxxx.supabase.co" />
+        </label>
+        <label class="text-sm">Anon Key
+          <input id="sbKey" type="text" class="w-full border rounded-lg px-3 py-2" placeholder="eyJhbGciOiJI..." />
+        </label>
+        <label class="text-sm">اسم الجدول
+          <input id="sbTable" type="text" class="w-full border rounded-lg px-3 py-2" value="field_entries" />
+        </label>
+        <div class="flex gap-2 mt-2">
+          <button id="saveSettings" class="px-3 py-2 rounded-lg bg-indigo-600 text-white">حفظ</button>
+          <button id="pushBtn" class="px-3 py-2 rounded-lg bg-blue-600 text-white">مزامنة إلى Supabase</button>
+          <button id="pullBtn" class="px-3 py-2 rounded-lg bg-white border">سحب من Supabase</button>
+        </div>
+        <p class="text-xs text-gray-600">
+          تنبيه: الصور تحفظ كنص Base64 في الحقل <code>photos</code>. يُفضَّل لاحقًا نقلها إلى Supabase Storage.
+        </p>
+        <details class="mt-2">
+          <summary class="cursor-pointer text-sm text-gray-700">تعليمات إنشاء الجدول والسياسات (SQL)</summary>
+<pre class="text-xs bg-gray-50 p-3 rounded-lg overflow-auto">-- أنشئ جدول الإدخالات
+create table if not exists public.field_entries (
+  id uuid primary key,
+  created_at timestamptz default now(),
+  section text,
+  area text,
+  item text,
+  issue text,
+  severity text,
+  impact_type text,
+  impact_value numeric,
+  deadline date,
+  owner text,
+  needs_decision boolean default false,
+  status text,
+  photos jsonb
+);
+
+-- تفعيل RLS
+alter table public.field_entries enable row level security;
+
+-- سياسة مؤقتة للسماح بالقراءة/الكتابة للجميع (اختبار فقط)
+create policy "anon_read"  on public.field_entries for select using (true);
+create policy "anon_write" on public.field_entries for insert with check (true);
+create policy "anon_update" on public.field_entries for update using (true);
+</pre>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== Utils =====
+    const LS_KEY  = "alzulfi_entries_v2";
+    const CFG_KEY = "alzulfi_cfg_v2";
+    const $ = (id) => document.getElementById(id);
+
+    function uuid() {
+      return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    }
+    function loadEntries() {
+      try { return JSON.parse(localStorage.getItem(LS_KEY) || "[]"); } catch { return []; }
+    }
+    function saveEntries(list) { localStorage.setItem(LS_KEY, JSON.stringify(list)); }
+    function loadCfg() {
+      try { return JSON.parse(localStorage.getItem(CFG_KEY) || "{}"); } catch { return {}; }
+    }
+    function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
+
+    // ===== Tabs =====
+    document.querySelectorAll(".tab").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        document.querySelectorAll('[id^="tab-"]').forEach((el) => el.classList.add("hidden"));
+        const t = btn.getAttribute("data-tab");
+        $(`tab-${t}`).classList.remove("hidden");
+
+        document.querySelectorAll(".tab").forEach((b) => {
+          b.classList.remove("bg-blue-600", "text-white");
+          b.classList.add("bg-white", "border");
+        });
+        btn.classList.remove("border", "bg-white");
+        btn.classList.add("bg-blue-600", "text-white");
+
+        renderAll();
+      })
+    );
+
+    // ===== Image compression =====
+    async function compressImages(files, maxW = 1280, quality = 0.7, limit = 5) {
+      const arr = Array.from(files).slice(0, limit);
+      const out = [];
+      for (const f of arr) {
+        if (!f.type.startsWith("image/")) continue;
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(f);
+        });
+        const img = await new Promise((res, rej) => {
+          const i = new Image();
+          i.onload = () => res(i);
+          i.onerror = rej;
+          i.src = dataUrl;
+        });
+        const scale = Math.min(1, maxW / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
+        out.push(canvas.toDataURL("image/jpeg", quality));
+      }
+      return out;
+    }
+
+    // ===== Rendering =====
+    function badge(cls, text){ return `<span class="px-2 py-0.5 rounded-full text-xs ${cls}">${text}</span>`; }
+
+    function renderList(list) {
+      const container = $("entries");
+      $("count").textContent = list.length;
+
+      const section = $("filterSection").value;
+      const q = $("filterSearch").value.toLowerCase().trim();
+
+      const filtered = list.filter((e) => {
+        const okS = !section || e.section === section;
+        const blob = `${e.section} ${e.area} ${e.item} ${e.issue} ${e.owner} ${e.status}`.toLowerCase();
+        const okQ = !q || blob.includes(q);
+        return okS && okQ;
+      });
+
+      container.innerHTML = "";
+      if (!filtered.length) {
+        container.innerHTML = '<div class="text-sm text-gray-500">لا توجد سجلات.</div>';
+        return;
+      }
+
+      for (const e of filtered) {
+        const sevColor = {
+          "منخفض": "bg-green-100 text-green-800",
+          "متوسط": "bg-yellow-100 text-yellow-800",
+          "عالٍ":   "bg-orange-100 text-orange-800",
+          "حرج":   "bg-red-100 text-red-800",
+        }[e.severity] || "bg-gray-100";
+
+        const photosHtml = (e.photos || [])
+          .map((src) => `<a href="${src}" target="_blank"><img src="${src}" alt="photo" class="h-16 w-16 object-cover rounded-lg border"/></a>`)
+          .join("");
+
+        const el = document.createElement("div");
+        el.className = "border rounded-xl p-4 flex flex-col gap-3";
+        el.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="text-xs text-gray-500">${e.section || ""}</div>
+              <div class="text-base font-medium">${escapeHtml(e.area || "")} ${e.item ? " · " + escapeHtml(e.item) : ""}</div>
+            </div>
+            <div class="flex items-center gap-2">
+              ${badge(sevColor, e.severity || "")}
+              ${badge("bg-gray-100", e.status || "")}
+            </div>
+          </div>
+          <div class="text-sm">${escapeHtml(e.issue || "")}</div>
+          <div class="flex flex-wrap items-center gap-3 text-xs text-gray-600">
+            ${e.owner ? `<span class="tag">مسؤول: ${escapeHtml(e.owner)}</span>` : ""}
+            ${e.deadline ? `<span class="tag">الاستحقاق: ${e.deadline}</span>` : ""}
+            ${(e.impactType && e.impactValue) ? `<span class="tag">الأثر: ${e.impactValue} ${e.impactType}</span>` : ""}
+            ${e.needsDecision === "Yes" ? `<span class="tag" style="background:#ede9fe;color:#6d28d9">قرار</span>` : ""}
+          </div>
+          ${photosHtml ? `<div class="flex gap-2">${photosHtml}</div>` : ""}
+          <div class="flex items-center gap-2">
+            <button data-id="${e.id}" class="editBtn px-3 py-1.5 rounded-lg bg-white border text-sm">تعديل</button>
+            <button data-id="${e.id}" class="delBtn px-3 py-1.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">حذف</button>
+          </div>
+        `;
+        container.appendChild(el);
+      }
+
+      container.querySelectorAll(".delBtn").forEach((btn) =>
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id");
+          const list = loadEntries().filter((x) => x.id !== id);
+          saveEntries(list);
+          renderAll();
+        })
+      );
+
+      container.querySelectorAll(".editBtn").forEach((btn) =>
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id");
+          const e = loadEntries().find((x) => x.id === id);
+          if (!e) return;
+          $("section").value = e.section || "المرافق";
+          $("area").value = e.area || "";
+          $("item").value = e.item || "";
+          $("issue").value = e.issue || "";
+          $("severity").value = e.severity || "منخفض";
+          $("impactType").value = e.impactType || "ساعات";
+          $("impactValue").value = e.impactValue || "";
+          $("deadline").value = e.deadline || "";
+          $("owner").value = e.owner || "";
+          $("needsDecision").value = e.needsDecision || "No";
+          $("status").value = e.status || "مفتوح";
+          $("entryForm").setAttribute("data-edit-id", id);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        })
+      );
+    }
+
+    function renderDecisions(list) {
+      const decs = list.filter((e) => e.needsDecision === "Yes");
+      const box = $("decisionsBoard");
+      if (!decs.length) {
+        box.innerHTML = '<div class="text-sm text-gray-500">لا توجد عناصر تتطلب قرار.</div>';
+        return;
+      }
+      box.innerHTML = decs
+        .map(
+          (e) => `
+        <div class="border rounded-xl p-3 flex flex-col gap-1">
+          <div class="text-sm"><span class="font-medium">${escapeHtml(e.area || "")}</span> — ${escapeHtml(e.item || "")}</div>
+          <div class="text-xs text-gray-600">${escapeHtml(e.issue || "")}</div>
+          <div class="text-xs text-gray-600 flex flex-wrap gap-2">
+            ${e.owner ? `<span class="tag">مسؤول: ${escapeHtml(e.owner)}</span>` : ""}
+            ${e.deadline ? `<span class="tag">الاستحقاق: ${e.deadline}</span>` : ""}
+            <span class="tag">${escapeHtml(e.severity || "")}</span>
+          </div>
+        </div>`
+        )
+        .join("");
+    }
+
+    function renderIssues(list) {
+      const box = $("issuesLog");
+      if (!list.length) {
+        box.innerHTML = '<div class="text-sm text-gray-500">لا توجد قضايا.</div>';
+        return;
+      }
+      box.innerHTML = list
+        .map(
+          (e) => `
+        <div class="border rounded-xl p-3 flex flex-col gap-1">
+          <div class="text-sm"><span class="font-medium">${escapeHtml(e.section || "")}</span> — ${escapeHtml(e.area || "")} · ${escapeHtml(e.item || "")}</div>
+          <div class="text-xs text-gray-600">${escapeHtml(e.issue || "")}</div>
+          <div class="text-xs text-gray-600 flex flex-wrap gap-2">
+            <span class="tag">${escapeHtml(e.severity || "")}</span>
+            ${e.status ? `<span class="tag">${escapeHtml(e.status)}</span>` : ""}
+            ${(e.impactType && e.impactValue) ? `<span class="tag">${e.impactValue} ${e.impactType}</span>` : ""}
+          </div>
+        </div>`
+        )
+        .join("");
+    }
+
+    function renderAll() {
+      const list = loadEntries();
+      renderList(list);
+      renderDecisions(list);
+      renderIssues(list);
+    }
+
+    function escapeHtml(s = "") {
+      return s.replace(/[&<>\"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    // ===== Form submit =====
+    $("entryForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = e.currentTarget;
+      const entry = {
+        id: form.getAttribute("data-edit-id") || uuid(),
+        section: $("section").value,
+        area: $("area").value.trim(),
+        item: $("item").value.trim(),
+        issue: $("issue").value.trim(),
+        severity: $("severity").value,
+        impactType: $("impactType").value,
+        impactValue: $("impactValue").value,
+        deadline: $("deadline").value,
+        owner: $("owner").value.trim(),
+        needsDecision: $("needsDecision").value,
+        status: $("status").value,
+        photos: [],
+        createdAt: new Date().toISOString(),
+      };
+      const files = $("photos").files;
+      if (files && files.length) entry.photos = await compressImages(files);
+
+      const list = loadEntries();
+      const i = list.findIndex((x) => x.id === entry.id);
+      if (i >= 0) list[i] = entry; else list.unshift(entry);
+      saveEntries(list);
+
+      form.reset();
+      form.removeAttribute("data-edit-id");
+      renderAll();
+    });
+
+    $("resetFormBtn").addEventListener("click", () => {
+      const f = $("entryForm");
+      f.reset();
+      f.removeAttribute("data-edit-id");
+    });
+
+    $("applyFilters").addEventListener("click", renderAll);
+    $("clearFilters").addEventListener("click", () => {
+      $("filterSection").value = "";
+      $("filterSearch").value = "";
+      renderAll();
+    });
+
+    // ===== Export / Import / WhatsApp =====
+    $("exportJsonBtn").addEventListener("click", () => {
+      const data = loadEntries();
+      const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), entries: data }, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `alzulfi-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    $("exportCsvBtn").addEventListener("click", () => {
+      const data = loadEntries();
+      const headers = ["id","createdAt","section","area","item","issue","severity","impactType","impactValue","deadline","owner","needsDecision","status","photosCount"];
+      const rows = [headers.join(",")];
+      for (const e of data) {
+        const r = [e.id, e.createdAt, e.section, e.area, e.item, (e.issue || "").replace(/\n/g, " "), e.severity, e.impactType, e.impactValue, e.deadline, e.owner, e.needsDecision, e.status, (e.photos || []).length];
+        rows.push(r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","));
+      }
+      const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `alzulfi-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    $("waBtn").addEventListener("click", () => {
+      const list = loadEntries().slice(0, 10); // أول 10
+      const lines = list.map((e, i) =>
+        `${i + 1}) [${e.section}] ${e.area || ""}${e.item ? " · " + e.item : ""}\n- ${e.issue}\n- الشدة: ${e.severity} | ${e.status}${e.deadline ? " | الاستحقاق: " + e.deadline : ""}`
+      );
+      const text = `\nملخص الزيارة — ${new Date().toLocaleDateString("ar-SA")}\n\n` + lines.join("\n\n");
+      const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+      window.open(url, "_blank");
+    });
+
+    $("importInput").addEventListener("change", (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const json = JSON.parse(reader.result);
+          const entries = Array.isArray(json) ? json : (json.entries || []);
+          const existing = loadEntries();
+          const map = new Map(existing.map((x) => [x.id, x]));
+          for (const en of entries) map.set(en.id, en);
+          saveEntries(Array.from(map.values()).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+          renderAll();
+        } catch {
+          alert("فشل الاستيراد");
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = "";
+    });
+
+    $("clearBtn").addEventListener("click", () => {
+      if (confirm("سيتم حذف كل السجلات من هذا المتصفح. متابعة؟")) {
+        localStorage.removeItem(LS_KEY);
+        renderAll();
+      }
+    });
+
+    // ===== Supabase settings & sync =====
+    const openSettings = () => $("settingsModal").classList.remove("hidden");
+    const closeSettings = () => $("settingsModal").classList.add("hidden");
+
+    $("settingsBtn").addEventListener("click", () => {
+      const c = loadCfg();
+      $("sbUrl").value = c.url || "";
+      $("sbKey").value = c.key || "";
+      $("sbTable").value = c.table || "field_entries";
+      openSettings();
+    });
+    $("closeSettings").addEventListener("click", closeSettings);
+
+    let supa = null;
+    let sbTable = "field_entries";
+    function ensureSupabase() {
+      const c = loadCfg();
+      if (!c.url || !c.key) { alert("أدخل إعدادات Supabase أولًا"); return null; }
+      if (!supa) { supa = window.supabase.createClient(c.url, c.key); }
+      sbTable = c.table || "field_entries";
+      return supa;
+    }
+
+    $("saveSettings").addEventListener("click", () => {
+      saveCfg({ url: $("sbUrl").value.trim(), key: $("sbKey").value.trim(), table: $("sbTable").value.trim() || "field_entries" });
+      alert("تم الحفظ");
+    });
+
+    $("pushBtn").addEventListener("click", async () => {
+      const client = ensureSupabase(); if (!client) return;
+      const list = loadEntries();
+      for (const e of list) {
+        const payload = {
+          id: e.id,
+          created_at: e.createdAt,
+          section: e.section,
+          area: e.area,
+          item: e.item,
+          issue: e.issue,
+          severity: e.severity,
+          impact_type: e.impactType,
+          impact_value: e.impactValue ? Number(e.impactValue) : null,
+          deadline: e.deadline || null,
+          owner: e.owner,
+          needs_decision: e.needsDecision === "Yes",
+          status: e.status,
+          photos: JSON.stringify(e.photos || []),
+        };
+        await client.from(sbTable).upsert(payload, { onConflict: "id" });
+      }
+      alert("تمت المزامنة إلى Supabase");
+    });
+
+    $("pullBtn").addEventListener("click", async () => {
+      const client = ensureSupabase(); if (!client) return;
+      const { data, error } = await client.from(sbTable).select("*").order("created_at", { ascending: false }).limit(1000);
+      if (error) { alert("فشل السحب"); return; }
+      const normalized = (data || []).map((r) => ({
+        id: r.id,
+        createdAt: r.created_at || new Date().toISOString(),
+        section: r.section,
+        area: r.area,
+        item: r.item,
+        issue: r.issue,
+        severity: r.severity,
+        impactType: r.impact_type,
+        impactValue: r.impact_value,
+        deadline: r.deadline,
+        owner: r.owner,
+        needsDecision: r.needs_decision ? "Yes" : "No",
+        status: r.status,
+        photos: Array.isArray(r.photos) ? r.photos : (() => { try { return JSON.parse(r.photos || "[]"); } catch { return []; } })(),
+      }));
+      const existing = loadEntries();
+      const map = new Map(existing.map((x) => [x.id, x]));
+      for (const en of normalized) map.set(en.id, en);
+      saveEntries(Array.from(map.values()).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+      renderAll();
+      alert("تم السحب من Supabase");
+    });
+
+    // ===== Init =====
+    renderAll();
+  </script>
+</body>
+</html>
